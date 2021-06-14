@@ -1,5 +1,6 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Configuration;
+using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.UI;
@@ -10,6 +11,7 @@ namespace QualityModsProgram
     public class MinerInfo : BaseUnityPlugin
     {
         private Harmony _harmony;
+        new internal static ManualLogSource Logger;
 
         private class PluginConfig
         {
@@ -19,6 +21,8 @@ namespace QualityModsProgram
 
         void Awake()
         {
+            MinerInfo.Logger = base.Logger;
+
             PluginConfig.ShowVeinMaxMinerOutput = Config.Bind(
                 "MinerInfo",
                 "ShowVeinMaxMinerOutput",
@@ -72,6 +76,7 @@ namespace QualityModsProgram
 
                         int minedVeinsCount = CountTotalMinedVeinsInVeinGroup(__instance.veinGroupIndex, __instance.inspectPlanet);
                         double itemsPerSecond = 0.5 * miningSpeedScale * minedVeinsCount;
+                        Logger.LogDebug("itemsPerSecond [" + itemsPerSecond.ToString() + "]");
 
                         string text = string.Concat(new string[]
                         {
@@ -116,14 +121,57 @@ namespace QualityModsProgram
 
             private static int CountTotalMinedVeinsInVeinGroup(int veinGroupIndex, PlanetData planetData)
             {
+                Logger.LogDebug("Getting vein counts for veinGroupIndex [" + veinGroupIndex.ToString() + "]");
                 int minedVeinsCount = 0;
-                foreach (VeinData veinData in planetData.factory.veinPool)
+                foreach (MinerComponent miner in planetData.factory.factorySystem.minerPool)
                 {
-                    if (veinData.groupIndex == veinGroupIndex)
+                    // Skip miners that aren't mining a mineral (e.g. water)
+                    if (miner.type != EMinerType.Vein)
                     {
-                        minedVeinsCount += veinData.minerCount;
+                        continue;
+                    }
+
+                    // Make sure veins is initialized (it isn't when first loading a save)
+                    if (miner.veins == null)
+                    {
+                        continue;
+                    }
+
+                    // Skip miners that aren't mining anything
+                    if (miner.veinCount <= 0)
+                    {
+                        continue;
+                    }
+
+                    // A miner can only be mining one type of vein so just check the first non-none-type one's groupIndex
+                    VeinData minerVein = new VeinData();
+                    minerVein.SetNull();
+                    for(int i = 0; i < miner.veins.Length; i++)
+                    {
+                        VeinData tVein = planetData.factory.veinPool[miner.veins[i]];
+                        if(tVein.type != EVeinType.None)
+                        {
+                            minerVein = tVein;
+                            break;
+                        }
+                    }
+
+                    // depleted veins get their veinGroupIndex set to 0 which can inflate veinPool[0]'s count - these veins have EVeinType.None
+                    // so if none of this miner's veins have a non-none-type vein then it's that case
+                    if (minerVein.type == EVeinType.None)
+                    {
+                        continue;
+                    }
+
+                    // Otherwise, if this miner's vein's groupIndex is the VeinGroup's, append its count
+                    if(minerVein.groupIndex == veinGroupIndex)
+                    {
+                        minedVeinsCount += miner.veinCount;
+                        Logger.LogDebug("Appending [" + miner.veinCount + "] veins for vein type [" + minerVein.type.ToString() + "] " + "miner type [" + miner.type.ToString() + "] miner ID [" + miner.id.ToString() + "]");
                     }
                 }
+
+                Logger.LogDebug("veinGroupIndex has [" + minedVeinsCount.ToString() + "] mined veins");
                 return minedVeinsCount;
             }
         }
